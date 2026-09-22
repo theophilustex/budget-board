@@ -117,11 +117,34 @@ public class BudgetService(
     {
         var userData = await GetCurrentUserAsync(userGuid);
 
-        var budgets = userData.Budgets.Where(b =>
-            b.Month.Month == month.Month && b.Month.Year == month.Year
+        var budgets = userData
+            .Budgets.Where(b => b.Month.Month == month.Month && b.Month.Year == month.Year)
+            .ToList();
+
+        if (!budgets.Any(b => b.IsRollover))
+        {
+            return budgets.Select(b => new BudgetResponse(b)).ToList();
+        }
+
+        var allCategories = TransactionCategoriesHelpers.GetAllTransactionCategories(userData);
+        var budgetsByCategoryMonth = userData
+            .Budgets.GroupBy(b => GetCategoryMonthKey(b.Category, b.Month))
+            .ToDictionary(g => g.Key, g => g.First());
+
+        // A rollover chain can only reach back as far as the user's earliest budget.
+        var earliestBudgetMonth = userData.Budgets.Min(b => b.Month);
+        var categorySpendMap = await BuildCategorySpendMapAsync(
+            userData.Id,
+            earliestBudgetMonth,
+            month
         );
 
-        return budgets.Select(b => new BudgetResponse(b)).ToList();
+        return budgets
+            .Select(b => new BudgetResponse(
+                b,
+                CalculateRollover(b, budgetsByCategoryMonth, categorySpendMap, allCategories)
+            ))
+            .ToList();
     }
 
     /// <inheritdoc />
@@ -131,6 +154,7 @@ public class BudgetService(
         var budget = GetBudgetById(userData, request.ID);
 
         budget.Limit = request.Limit;
+        budget.IsRollover = request.IsRollover;
 
         var allCategories = TransactionCategoriesHelpers.GetAllTransactionCategories(userData);
         // If the budget being updated is a parent category, ensure that the sum of its children does not exceed the new limit.
@@ -304,6 +328,7 @@ public class BudgetService(
             Month = request.Month,
             Category = request.Category,
             Limit = request.Limit,
+            IsRollover = request.IsRollover,
             UserID = userData.Id,
         };
 
@@ -343,6 +368,127 @@ public class BudgetService(
         DateOnly date,
         ApplicationUser userData
     ) => GetChildBudgetsForMonth(userData, parentCategory, date).Sum(b => b.Limit);
+
+    private static (string Category, int Year, int Month) GetCategoryMonthKey(
+        string category,
+        DateOnly month
+    ) => (category.ToLowerInvariant(), month.Year, month.Month);
+
+    /// <summary>
+    /// Totals transaction amounts per category and month, mirroring how the budgets page
+    /// attributes spending: a transaction counts toward both its category and its subcategory.
+    /// Hidden accounts, deleted transactions and the hide-from-budgets category are excluded.
+    /// </summary>
+    private async Task<Dictionary<(string, int, int), decimal>> BuildCategorySpendMapAsync(
+        Guid userId,
+        DateOnly fromMonth,
+        DateOnly toMonth
+    )
+    {
+        var start = new DateOnly(fromMonth.Year, fromMonth.Month, 1);
+        var end = new DateOnly(toMonth.Year, toMonth.Month, 1).AddMonths(1).AddDays(-1);
+
+        var transactions = await userDataContext
+            .Transactions.Where(t =>
+                t.Account!.UserID == userId
+                && t.Account.HideTransactions == false
+                && t.Deleted == null
+                && t.Category != TransactionCategoriesConstants.HideFromBudgetsCategory
+                && t.Date >= start
+                && t.Date <= end
+            )
+            .Select(t => new
+            {
+                t.Category,
+                t.Subcategory,
+                t.Date,
+                t.Amount,
+            })
+            .ToListAsync();
+
+        var spendMap = new Dictionary<(string, int, int), decimal>();
+
+        foreach (var transaction in transactions)
+        {
+            var category = transaction.Category ?? string.Empty;
+            AddSpend(spendMap, category, transaction.Date, transaction.Amount);
+
+            var subcategory = transaction.Subcategory;
+            if (
+                !string.IsNullOrEmpty(subcategory)
+                && !subcategory.Equals(category, StringComparison.InvariantCultureIgnoreCase)
+            )
+            {
+                AddSpend(spendMap, subcategory, transaction.Date, transaction.Amount);
+            }
+        }
+
+        return spendMap;
+    }
+
+    private static void AddSpend(
+        Dictionary<(string, int, int), decimal> spendMap,
+        string category,
+        DateOnly date,
+        decimal amount
+    )
+    {
+        var key = GetCategoryMonthKey(category, date);
+        spendMap[key] = spendMap.GetValueOrDefault(key) + amount;
+    }
+
+    /// <summary>
+    /// Sums the unspent remainder of every consecutive preceding month that also had rollover
+    /// enabled for this category. Overspent months contribute a negative amount, so a deficit
+    /// carries forward until it is paid back.
+    /// </summary>
+    private static decimal CalculateRollover(
+        Budget budget,
+        IReadOnlyDictionary<(string, int, int), Budget> budgetsByCategoryMonth,
+        IReadOnlyDictionary<(string, int, int), decimal> categorySpendMap,
+        IEnumerable<ITransactionCategoryResponse> allCategories
+    )
+    {
+        if (!budget.IsRollover)
+        {
+            return 0;
+        }
+
+        // Expense amounts are stored negative, so they need flipping to count against a limit.
+        var sign = IsIncomeCategory(budget.Category, allCategories) ? 1 : -1;
+
+        var rollover = 0m;
+        var month = budget.Month.AddMonths(-1);
+
+        while (
+            budgetsByCategoryMonth.TryGetValue(
+                GetCategoryMonthKey(budget.Category, month),
+                out var priorBudget
+            ) && priorBudget.IsRollover
+        )
+        {
+            var spend = categorySpendMap.GetValueOrDefault(
+                GetCategoryMonthKey(budget.Category, month)
+            );
+            rollover += priorBudget.Limit - (spend * sign);
+            month = month.AddMonths(-1);
+        }
+
+        return rollover;
+    }
+
+    private static bool IsIncomeCategory(
+        string category,
+        IEnumerable<ITransactionCategoryResponse> allCategories
+    ) =>
+        allCategories
+            .FirstOrDefault(c =>
+                c.Value.Equals(category, StringComparison.InvariantCultureIgnoreCase)
+            )
+            ?.CategoryType.Equals(
+                TransactionCategoryTypes.Income,
+                StringComparison.InvariantCultureIgnoreCase
+            ) ?? false;
 
     private static void UpdateParentBudgetLimit(
         string parentCategory,

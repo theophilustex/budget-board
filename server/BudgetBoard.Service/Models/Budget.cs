@@ -8,6 +8,7 @@ public interface IBudgetCreateRequest
     DateOnly Month { get; }
     string Category { get; }
     decimal Limit { get; }
+    bool IsRollover { get; }
 }
 
 public class BudgetCreateRequest : IBudgetCreateRequest
@@ -15,24 +16,28 @@ public class BudgetCreateRequest : IBudgetCreateRequest
     public DateOnly Month { get; set; } = DateOnly.MinValue;
     public string Category { get; set; } = string.Empty;
     public decimal Limit { get; set; } = 0;
+    public bool IsRollover { get; set; } = false;
 }
 
 public interface IBudgetUpdateRequest
 {
     Guid ID { get; }
     decimal Limit { get; }
+    bool IsRollover { get; }
 }
 
 public class BudgetUpdateRequest : IBudgetUpdateRequest
 {
     public Guid ID { get; set; }
     public decimal Limit { get; set; }
+    public bool IsRollover { get; set; }
 
     [JsonConstructor]
     public BudgetUpdateRequest()
     {
         ID = Guid.NewGuid();
         Limit = 0;
+        IsRollover = false;
     }
 }
 
@@ -42,6 +47,8 @@ public interface IBudgetResponse
     DateOnly Month { get; }
     string Category { get; }
     decimal Limit { get; }
+    bool IsRollover { get; }
+    decimal Rollover { get; }
     Guid UserID { get; }
 }
 
@@ -51,14 +58,22 @@ public class BudgetResponse : IBudgetResponse
     public DateOnly Month { get; set; } = DateOnly.MinValue;
     public string Category { get; set; } = string.Empty;
     public decimal Limit { get; set; } = 0;
+    public bool IsRollover { get; set; } = false;
+
+    /// <summary>
+    /// The balance carried in from prior months. Negative when earlier months were overspent.
+    /// </summary>
+    public decimal Rollover { get; set; } = 0;
     public Guid UserID { get; set; } = Guid.NewGuid();
 
-    public BudgetResponse(Budget budget)
+    public BudgetResponse(Budget budget, decimal rollover = 0)
     {
         ID = budget.ID;
         Month = budget.Month;
         Category = budget.Category;
         Limit = budget.Limit;
+        IsRollover = budget.IsRollover;
+        Rollover = rollover;
         UserID = budget.UserID;
     }
 }

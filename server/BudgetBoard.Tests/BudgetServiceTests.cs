@@ -617,6 +617,225 @@ public class BudgetServiceTests
     }
     #endregion
 
+    #region Rollover
+    private const string RolloverCategory = "Groceries";
+
+    private static BudgetService CreateBudgetService(TestHelper helper) =>
+        new(
+            Mock.Of<ILogger<IBudgetService>>(),
+            helper.UserDataContext,
+            TestHelper.CreateMockLocalizer<ResponseStrings>(),
+            TestHelper.CreateMockLocalizer<LogStrings>()
+        );
+
+    private static Budget AddRolloverBudget(
+        TestHelper helper,
+        DateOnly month,
+        decimal limit,
+        bool isRollover = true
+    )
+    {
+        var budget = new Budget
+        {
+            ID = Guid.NewGuid(),
+            Category = RolloverCategory,
+            Limit = limit,
+            IsRollover = isRollover,
+            Month = month,
+            UserID = helper.demoUser.Id,
+        };
+
+        helper.UserDataContext.Budgets.Add(budget);
+        return budget;
+    }
+
+    private static void AddSpend(
+        TestHelper helper,
+        Guid accountId,
+        DateOnly month,
+        decimal spend,
+        bool isDeleted = false
+    )
+    {
+        helper.UserDataContext.Transactions.Add(
+            new Transaction
+            {
+                ID = Guid.NewGuid(),
+                // Expenses are stored as negative amounts.
+                Amount = -spend,
+                Date = month,
+                Category = RolloverCategory,
+                Source = "Manual",
+                AccountID = accountId,
+                Deleted = isDeleted ? DateTime.UtcNow : null,
+            }
+        );
+    }
+
+    private static Guid AddAccount(TestHelper helper, bool hideTransactions = false)
+    {
+        var account = new AccountFaker(helper.demoUser.Id).Generate();
+        account.HideTransactions = hideTransactions;
+        helper.UserDataContext.Accounts.Add(account);
+        return account.ID;
+    }
+
+    [Fact]
+    public async Task ReadBudgetsAsync_WhenRolloverEnabled_ShouldCarryUnspentFromPriorMonth()
+    {
+        // Arrange
+        var helper = new TestHelper();
+        var budgetService = CreateBudgetService(helper);
+        var accountId = AddAccount(helper);
+
+        var january = new DateOnly(2026, 1, 1);
+        var february = new DateOnly(2026, 2, 1);
+
+        AddRolloverBudget(helper, january, 400);
+        AddRolloverBudget(helper, february, 400);
+        AddSpend(helper, accountId, january.AddDays(9), 250);
+        helper.UserDataContext.SaveChanges();
+
+        // Act
+        var readBudgets = await budgetService.ReadBudgetsAsync(helper.demoUser.Id, february);
+
+        // Assert
+        readBudgets.Should().ContainSingle();
+        readBudgets.Single().Rollover.Should().Be(150);
+        readBudgets.Single().IsRollover.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReadBudgetsAsync_WhenPriorMonthOverspent_ShouldCarryDeficit()
+    {
+        // Arrange
+        var helper = new TestHelper();
+        var budgetService = CreateBudgetService(helper);
+        var accountId = AddAccount(helper);
+
+        var january = new DateOnly(2026, 1, 1);
+        var february = new DateOnly(2026, 2, 1);
+
+        AddRolloverBudget(helper, january, 400);
+        AddRolloverBudget(helper, february, 400);
+        AddSpend(helper, accountId, january.AddDays(9), 500);
+        helper.UserDataContext.SaveChanges();
+
+        // Act
+        var readBudgets = await budgetService.ReadBudgetsAsync(helper.demoUser.Id, february);
+
+        // Assert
+        readBudgets.Single().Rollover.Should().Be(-100);
+    }
+
+    [Fact]
+    public async Task ReadBudgetsAsync_WhenRolloverSpansMultipleMonths_ShouldAccumulateBalance()
+    {
+        // Arrange
+        var helper = new TestHelper();
+        var budgetService = CreateBudgetService(helper);
+        var accountId = AddAccount(helper);
+
+        var january = new DateOnly(2026, 1, 1);
+        var february = new DateOnly(2026, 2, 1);
+        var march = new DateOnly(2026, 3, 1);
+        var april = new DateOnly(2026, 4, 1);
+
+        AddRolloverBudget(helper, january, 400);
+        AddRolloverBudget(helper, february, 400);
+        AddRolloverBudget(helper, march, 400);
+        AddRolloverBudget(helper, april, 400);
+        AddSpend(helper, accountId, january.AddDays(9), 250);
+        AddSpend(helper, accountId, february.AddDays(9), 500);
+        AddSpend(helper, accountId, march.AddDays(9), 600);
+        helper.UserDataContext.SaveChanges();
+
+        // Act
+        var readBudgets = await budgetService.ReadBudgetsAsync(helper.demoUser.Id, april);
+
+        // Assert
+        // (400 - 250) + (400 - 500) + (400 - 600)
+        readBudgets.Single().Rollover.Should().Be(-150);
+    }
+
+    [Fact]
+    public async Task ReadBudgetsAsync_WhenPriorMonthRolloverDisabled_ShouldStopChain()
+    {
+        // Arrange
+        var helper = new TestHelper();
+        var budgetService = CreateBudgetService(helper);
+        var accountId = AddAccount(helper);
+
+        var january = new DateOnly(2026, 1, 1);
+        var february = new DateOnly(2026, 2, 1);
+        var march = new DateOnly(2026, 3, 1);
+
+        AddRolloverBudget(helper, january, 400, isRollover: false);
+        AddRolloverBudget(helper, february, 400);
+        AddRolloverBudget(helper, march, 400);
+        AddSpend(helper, accountId, january.AddDays(9), 0);
+        AddSpend(helper, accountId, february.AddDays(9), 100);
+        helper.UserDataContext.SaveChanges();
+
+        // Act
+        var readBudgets = await budgetService.ReadBudgetsAsync(helper.demoUser.Id, march);
+
+        // Assert
+        // Only February carries; January's unspent 400 is excluded.
+        readBudgets.Single().Rollover.Should().Be(300);
+    }
+
+    [Fact]
+    public async Task ReadBudgetsAsync_WhenRolloverDisabled_ShouldNotCarryBalance()
+    {
+        // Arrange
+        var helper = new TestHelper();
+        var budgetService = CreateBudgetService(helper);
+        var accountId = AddAccount(helper);
+
+        var january = new DateOnly(2026, 1, 1);
+        var february = new DateOnly(2026, 2, 1);
+
+        AddRolloverBudget(helper, january, 400, isRollover: false);
+        AddRolloverBudget(helper, february, 400, isRollover: false);
+        AddSpend(helper, accountId, january.AddDays(9), 250);
+        helper.UserDataContext.SaveChanges();
+
+        // Act
+        var readBudgets = await budgetService.ReadBudgetsAsync(helper.demoUser.Id, february);
+
+        // Assert
+        readBudgets.Single().Rollover.Should().Be(0);
+        readBudgets.Single().IsRollover.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReadBudgetsAsync_WhenRolloverEnabled_ShouldIgnoreHiddenAndDeletedTransactions()
+    {
+        // Arrange
+        var helper = new TestHelper();
+        var budgetService = CreateBudgetService(helper);
+        var accountId = AddAccount(helper);
+        var hiddenAccountId = AddAccount(helper, hideTransactions: true);
+
+        var january = new DateOnly(2026, 1, 1);
+        var february = new DateOnly(2026, 2, 1);
+
+        AddRolloverBudget(helper, january, 400);
+        AddRolloverBudget(helper, february, 400);
+        AddSpend(helper, accountId, january.AddDays(9), 100);
+        AddSpend(helper, hiddenAccountId, january.AddDays(9), 1000);
+        AddSpend(helper, accountId, january.AddDays(9), 500, isDeleted: true);
+        helper.UserDataContext.SaveChanges();
+
+        // Act
+        var readBudgets = await budgetService.ReadBudgetsAsync(helper.demoUser.Id, february);
+
+        // Assert
+        readBudgets.Single().Rollover.Should().Be(300);
+    }
+    #endregion
+
     #region UpdateBudgetAsync
     [Fact]
     public async Task UpdateBudgetAsync_WhenValidData_ShouldUpdateBudget()

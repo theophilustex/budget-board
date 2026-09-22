@@ -27,6 +27,7 @@ import PrimaryText from "~/components/core/Text/PrimaryText/PrimaryText";
 import DimmedText from "~/components/core/Text/DimmedText/DimmedText";
 import { useSensitiveAmountFormatter } from "~/components/core/Text/SensitiveAmount/SensitiveAmount";
 import NumberInput from "~/components/core/Input/NumberInput/NumberInput";
+import Checkbox from "~/components/core/Checkbox/Checkbox";
 import Popover from "~/components/core/Popover/Popover";
 import Progress from "~/components/core/Progress/Progress";
 import { ProgressType } from "~/components/core/Progress/ProgressBase/ProgressBase";
@@ -45,6 +46,7 @@ export interface BudgetParentCardProps {
   categoryTree: ICategoryNode;
   categoryToBudgetsMap: Map<string, IBudget[]>;
   categoryToLimitsMap: Map<string, number>;
+  categoryToRolloverMap: Map<string, number>;
   categoryToTransactionsTotalMap: Map<string, number>;
   categoryToRecurringForecastTotalMap: Map<string, number>;
   selectedDate: Date | null;
@@ -91,6 +93,11 @@ const BudgetParentCard = (props: BudgetParentCardProps): React.ReactNode => {
     [];
   const id =
     budgets.length === 1 && props.selectedDate ? (budgets[0]?.id ?? "") : "";
+  const isRollover = budgets.some((budget) => budget.isRollover);
+  const rollover =
+    props.categoryToRolloverMap.get(props.categoryTree.value.toLowerCase()) ??
+    0;
+  const availableLimit = limit + rollover;
 
   const newLimitField = useField<number | string>({
     initialValue: limit ?? 0,
@@ -102,10 +109,10 @@ const BudgetParentCard = (props: BudgetParentCardProps): React.ReactNode => {
       props.categoryTree.value.toLowerCase(),
     ) ?? 0) *
       (isIncome ? 1 : -1)) /
-      limit) *
+      availableLimit) *
       100,
   );
-  const handleEdit = (newLimit?: number | string) => {
+  const handleEdit = (newLimit?: number | string, newIsRollover?: boolean) => {
     if (newLimit === "") {
       return;
     }
@@ -115,6 +122,7 @@ const BudgetParentCard = (props: BudgetParentCardProps): React.ReactNode => {
     updateBudgetMutation.mutate({
       id,
       limit: Number(newLimit),
+      isRollover: newIsRollover ?? isRollover,
     });
   };
 
@@ -165,6 +173,12 @@ const BudgetParentCard = (props: BudgetParentCardProps): React.ReactNode => {
               props.categoryToLimitsMap.get(subCategory.value.toLowerCase()) ??
               0
             }
+            rollover={
+              props.categoryToRolloverMap.get(
+                subCategory.value.toLowerCase(),
+              ) ?? 0
+            }
+            isRollover={budgets.some((budget) => budget.isRollover)}
             isIncome={isIncome}
             icon={getCategoryIcon(subCategory.value, allTransactionCategories)}
             selectedDate={props.selectedDate ?? dayjs().toDate()}
@@ -322,6 +336,15 @@ const BudgetParentCard = (props: BudgetParentCardProps): React.ReactNode => {
                         elevation={1}
                       />
                     </Flex>
+                    <Checkbox
+                      checked={isRollover}
+                      onChange={(e) =>
+                        handleEdit(newLimitField.getValue(), e.target.checked)
+                      }
+                      label={t("roll_over_unspent")}
+                      size="xs"
+                      elevation={1}
+                    />
                   </>
                 ) : (
                   <Trans
@@ -330,7 +353,7 @@ const BudgetParentCard = (props: BudgetParentCardProps): React.ReactNode => {
                       amount: formatSensitiveAmount(
                         amount * (isIncome ? 1 : -1),
                       ),
-                      total: formatSensitiveAmount(limit),
+                      total: formatSensitiveAmount(availableLimit),
                     }}
                     components={[
                       <PrimaryText
@@ -359,7 +382,7 @@ const BudgetParentCard = (props: BudgetParentCardProps): React.ReactNode => {
                   size={12}
                   percentComplete={percentComplete}
                   amount={amount}
-                  limit={limit}
+                  limit={availableLimit}
                   projectedAmount={projectedAmount}
                   type={isIncome ? ProgressType.Income : ProgressType.Expense}
                   warningThreshold={budgetWarningThreshold}
@@ -378,7 +401,8 @@ const BudgetParentCard = (props: BudgetParentCardProps): React.ReactNode => {
             <BudgetMetrics
               amount={amount}
               projectedAmount={projectedAmount}
-              limit={limit}
+              limit={availableLimit}
+              rollover={isRollover ? rollover : undefined}
               isIncome={isIncome}
               budgetWarningThreshold={budgetWarningThreshold}
               formatAmount={formatSensitiveAmount}

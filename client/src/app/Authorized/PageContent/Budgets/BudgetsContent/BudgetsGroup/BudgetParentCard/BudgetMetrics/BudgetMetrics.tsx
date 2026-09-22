@@ -12,7 +12,9 @@ import StatusText from "~/components/core/Text/StatusText/StatusText";
 interface BudgetMetricsProps {
   amount: number;
   projectedAmount: number;
+  /** Already includes any rollover carried in from prior months. */
   limit: number;
+  rollover?: number;
   isIncome: boolean;
   budgetWarningThreshold: number;
   formatAmount: (amount: number) => string;
@@ -31,9 +33,32 @@ const BudgetMetrics = (props: BudgetMetricsProps): React.ReactNode => {
   const statusType = props.isIncome
     ? StatusColorType.Income
     : StatusColorType.Expense;
+  const rollover = roundAwayFromZero(props.rollover ?? 0);
 
   return (
     <Group className={classes.metrics} gap={0} align="baseline" wrap="wrap">
+      {rollover !== 0 && (
+        <Box className={classes.metric}>
+          <Trans
+            i18nKey="budget_rolled_over_styled"
+            values={{ amount: props.formatAmount(rollover) }}
+            components={[
+              <DimmedText
+                className={classes.inlineText}
+                size="sm"
+                key="label"
+                elevation={1}
+              />,
+              <PrimaryText
+                className={classes.inlineText}
+                size="sm"
+                key="amount"
+                elevation={1}
+              />,
+            ]}
+          />
+        </Box>
+      )}
       {hasProjection && (
         <Group
           className={classes.forecastGroup}

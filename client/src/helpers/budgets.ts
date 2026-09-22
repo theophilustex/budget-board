@@ -246,34 +246,33 @@ export const getTotalLimitForCategory = (
   }, 0);
 };
 
-export const buildCategoryToLimitsMap = (
+const buildCategoryToBudgetValueMap = (
   budgets: IBudget[],
   categories: ICategoryNode[],
+  getValue: (budget: IBudget) => number,
 ): Map<string, number> => {
-  const categoryToLimitsMap = new Map<string, number>();
+  const categoryToValuesMap = new Map<string, number>();
 
   budgets.forEach((budget) => {
-    if (categoryToLimitsMap.has(budget.category.toLocaleLowerCase())) {
-      categoryToLimitsMap.set(
+    const value = getValue(budget);
+
+    if (categoryToValuesMap.has(budget.category.toLocaleLowerCase())) {
+      categoryToValuesMap.set(
         budget.category.toLocaleLowerCase(),
-        categoryToLimitsMap.get(budget.category.toLocaleLowerCase())! +
-          budget.limit,
+        categoryToValuesMap.get(budget.category.toLocaleLowerCase())! + value,
       );
     } else {
-      categoryToLimitsMap.set(
-        budget.category.toLocaleLowerCase(),
-        budget.limit,
-      );
+      categoryToValuesMap.set(budget.category.toLocaleLowerCase(), value);
     }
 
-    // If the budget is for a subcategory, add the limit to the parent category
+    // If the budget is for a subcategory, add the value to the parent category
     if (!categories.some((c) => areStringsEqual(c.value, budget.category))) {
       const parentCategory =
         categories
           .flatMap((c) => c.subCategories)
           .find((c) => areStringsEqual(c.value, budget.category))?.parent ?? "";
 
-      // We only want to add the limit to the parent category if it is not already in the budgets
+      // We only want to add the value to the parent category if it is not already in the budgets
       if (
         !parentCategory ||
         budgets.some((b) => areStringsEqual(b.category, parentCategory))
@@ -281,20 +280,32 @@ export const buildCategoryToLimitsMap = (
         return;
       }
 
-      if (categoryToLimitsMap.has(parentCategory.toLocaleLowerCase())) {
-        categoryToLimitsMap.set(
+      if (categoryToValuesMap.has(parentCategory.toLocaleLowerCase())) {
+        categoryToValuesMap.set(
           parentCategory.toLocaleLowerCase(),
-          categoryToLimitsMap.get(parentCategory.toLocaleLowerCase())! +
-            budget.limit,
+          categoryToValuesMap.get(parentCategory.toLocaleLowerCase())! + value,
         );
       } else {
-        categoryToLimitsMap.set(
-          parentCategory.toLocaleLowerCase(),
-          budget.limit,
-        );
+        categoryToValuesMap.set(parentCategory.toLocaleLowerCase(), value);
       }
     }
   });
 
-  return categoryToLimitsMap;
+  return categoryToValuesMap;
 };
+
+export const buildCategoryToLimitsMap = (
+  budgets: IBudget[],
+  categories: ICategoryNode[],
+): Map<string, number> =>
+  buildCategoryToBudgetValueMap(budgets, categories, (budget) => budget.limit);
+
+export const buildCategoryToRolloverMap = (
+  budgets: IBudget[],
+  categories: ICategoryNode[],
+): Map<string, number> =>
+  buildCategoryToBudgetValueMap(
+    budgets,
+    categories,
+    (budget) => budget.rollover,
+  );

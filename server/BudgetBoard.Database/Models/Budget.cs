@@ -26,6 +26,11 @@ public class Budget
     public required decimal Limit { get; set; }
 
     /// <summary>
+    /// Whether the unspent (or overspent) remainder of this budget carries into the next month.
+    /// </summary>
+    public bool IsRollover { get; set; } = false;
+
+    /// <summary>
     /// Identifier for the user who owns the budget.
     /// </summary>
     public required Guid UserID { get; set; }

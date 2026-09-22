@@ -34,7 +34,7 @@ const BudgetSummaryCard = (props: BudgetSummaryCardProps): React.ReactNode => {
     .filter((b) =>
       props.incomeCategories.some((c) => areStringsEqual(b.category, c.value)),
     )
-    .reduce((acc, b) => acc + b.limit, 0);
+    .reduce((acc, b) => acc + b.limit + b.rollover, 0);
   const incomeTransactionsTotal = props.incomeCategories.reduce(
     (acc, category) => {
       const transactionsTotal = props.categoryToTransactionsTotalMap.get(
@@ -49,7 +49,7 @@ const BudgetSummaryCard = (props: BudgetSummaryCardProps): React.ReactNode => {
     .filter((b) =>
       props.expenseCategories.some((c) => areStringsEqual(b.category, c.value)),
     )
-    .reduce((acc, b) => acc + b.limit, 0);
+    .reduce((acc, b) => acc + b.limit + b.rollover, 0);
   const expenseTransactionsTotal = props.expenseCategories.reduce(
     (acc, category) => {
       const transactionsTotal = props.categoryToTransactionsTotalMap.get(

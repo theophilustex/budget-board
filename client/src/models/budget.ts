@@ -2,11 +2,13 @@ export interface IBudgetCreateRequest {
   month: string;
   category: string;
   limit: number;
+  isRollover?: boolean;
 }
 
 export interface IBudgetUpdateRequest {
   id: string;
   limit: number;
+  isRollover: boolean;
 }
 
 export interface IBudget {
@@ -14,6 +16,9 @@ export interface IBudget {
   month: string;
   category: string;
   limit: number;
+  isRollover: boolean;
+  /** Balance carried in from prior months. Negative when earlier months were overspent. */
+  rollover: number;
   userId: string;
 }
 

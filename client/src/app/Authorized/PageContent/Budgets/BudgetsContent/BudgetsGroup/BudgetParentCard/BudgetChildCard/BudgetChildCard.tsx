@@ -19,6 +19,7 @@ import PrimaryText from "~/components/core/Text/PrimaryText/PrimaryText";
 import DimmedText from "~/components/core/Text/DimmedText/DimmedText";
 import { useSensitiveAmountFormatter } from "~/components/core/Text/SensitiveAmount/SensitiveAmount";
 import NumberInput from "~/components/core/Input/NumberInput/NumberInput";
+import Checkbox from "~/components/core/Checkbox/Checkbox";
 import Progress from "~/components/core/Progress/Progress";
 import { ProgressType } from "~/components/core/Progress/ProgressBase/ProgressBase";
 import BudgetMetrics from "../BudgetMetrics/BudgetMetrics";
@@ -35,6 +36,8 @@ interface BudgetChildCardProps {
   amount: number;
   projectedAmount?: number;
   limit: number;
+  rollover: number;
+  isRollover: boolean;
   isIncome: boolean;
   icon: string;
   selectedDate: Date;
@@ -53,13 +56,14 @@ const BudgetChildCard = (props: BudgetChildCardProps): React.ReactNode => {
   const updateBudgetMutation = useUpdateBudgetMutation();
   const deleteBudgetMutation = useDeleteBudgetMutation();
   const projectedAmount = props.projectedAmount ?? props.amount;
+  const availableLimit = props.limit + props.rollover;
 
   const newLimitField = useField<number | string>({
     initialValue: props.limit ?? 0,
     validate: (value) => (value !== "" ? null : t("invalid_limit")),
   });
 
-  const handleEdit = (newLimit?: number | string) => {
+  const handleEdit = (newLimit?: number | string, newIsRollover?: boolean) => {
     if (newLimit === "") {
       return;
     }
@@ -69,11 +73,12 @@ const BudgetChildCard = (props: BudgetChildCardProps): React.ReactNode => {
     updateBudgetMutation.mutate({
       id: props.id,
       limit: Number(newLimit),
+      isRollover: newIsRollover ?? props.isRollover,
     });
   };
 
   const percentComplete = roundAwayFromZero(
-    ((props.amount * (props.isIncome ? 1 : -1)) / props.limit) * 100,
+    ((props.amount * (props.isIncome ? 1 : -1)) / availableLimit) * 100,
   );
   return (
     <Box
@@ -172,6 +177,15 @@ const BudgetChildCard = (props: BudgetChildCardProps): React.ReactNode => {
                       elevation={1}
                     />
                   </Flex>
+                  <Checkbox
+                    checked={props.isRollover}
+                    onChange={(e) =>
+                      handleEdit(newLimitField.getValue(), e.target.checked)
+                    }
+                    label={t("roll_over_unspent")}
+                    size="xs"
+                    elevation={1}
+                  />
                 </>
               ) : (
                 <Trans
@@ -180,7 +194,7 @@ const BudgetChildCard = (props: BudgetChildCardProps): React.ReactNode => {
                     amount: formatSensitiveAmount(
                       props.amount * (props.isIncome ? 1 : -1),
                     ),
-                    total: formatSensitiveAmount(props.limit),
+                    total: formatSensitiveAmount(availableLimit),
                   }}
                   components={[
                     <PrimaryText
@@ -209,7 +223,7 @@ const BudgetChildCard = (props: BudgetChildCardProps): React.ReactNode => {
                 size={10}
                 percentComplete={percentComplete}
                 amount={props.amount}
-                limit={props.limit}
+                limit={availableLimit}
                 projectedAmount={projectedAmount}
                 type={
                   props.isIncome ? ProgressType.Income : ProgressType.Expense
@@ -230,7 +244,8 @@ const BudgetChildCard = (props: BudgetChildCardProps): React.ReactNode => {
           <BudgetMetrics
             amount={props.amount}
             projectedAmount={projectedAmount}
-            limit={props.limit}
+            limit={availableLimit}
+            rollover={props.isRollover ? props.rollover : undefined}
             isIncome={props.isIncome}
             budgetWarningThreshold={budgetWarningThreshold}
             formatAmount={formatSensitiveAmount}
